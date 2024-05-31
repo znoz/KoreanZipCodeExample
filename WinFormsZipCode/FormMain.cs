@@ -3,6 +3,7 @@ using System.Xml.Serialization;
 
 using WinFormsZipCode.ApiModels;
 
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 using static WinFormsZipCode.ApiModels.ApiPostalSearch;
 
 namespace WinFormsZipCode
@@ -86,13 +87,46 @@ namespace WinFormsZipCode
         {
             if (string.IsNullOrWhiteSpace(textBoxKeyword.Text)) return;
 
-            EnableControls(false);
-            Cursor = Cursors.WaitCursor;
-            labelMessage.Text = "";
+            try
+            {
+                EnableControls(false);
+                Cursor = Cursors.WaitCursor;
+                labelMessage.Text = "";
 
-            // HTTP 클라이언트 생성
-            using var client = new HttpClient();
+                // 요청 생성
+                var request = CreateRequest();
 
+                // API URL
+                string url = request.GetApiUrl();
+
+                // HTTP 클라이언트 생성
+                using var client = new HttpClient();
+
+                // API GET 호출
+                HttpResponseMessage response = await client.GetAsync(url);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    string xml = await response.Content.ReadAsStringAsync();
+
+                    LoadData(xml);
+                }
+
+                EnableControls(true);
+                Cursor = Cursors.Default;
+            }
+            catch(Exception ex)
+            {
+                labelMessage.Text = ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// 요청 생성
+        /// </summary>
+        /// <returns></returns>
+        Request CreateRequest()
+        {
             // 페이지 번호
             if (!int.TryParse(comboBoxPage.Text, out var page))
                 page = ApiPostalSearch.DEFAULT_PAGE;
@@ -101,33 +135,19 @@ namespace WinFormsZipCode
             if (!int.TryParse(comboBoxPageSize.Text, out var countPerPage))
                 countPerPage = ApiPostalSearch.DEFAULT_PAGE_SIZE;
 
-            // 요청 생성
-            var request = new Request
+            return new Request
             {
                 SearchKeyword = textBoxKeyword.Text,
                 CountPerPage = countPerPage,
                 CurrentPage = page
             };
-
-            string url = request.GetApiUrl();
-            HttpResponseMessage response = await client.GetAsync(url);
-
-            if (response.IsSuccessStatusCode)
-            {
-                string xml = await response.Content.ReadAsStringAsync();
-
-                ParseXML(xml);
-            }
-
-            EnableControls(true);
-            Cursor = Cursors.Default;
         }
 
         /// <summary>
-        /// XML 파싱
+        /// XML 데이터 읽어서 그리드에 바인딩
         /// </summary>
         /// <param name="xml"></param>
-        void ParseXML(string xml)
+        void LoadData(string xml)
         {
             var serializer = new XmlSerializer(typeof(Response));
 
@@ -135,24 +155,17 @@ namespace WinFormsZipCode
             {
                 var result = serializer.Deserialize(reader) as Response;
 
-                if (result == null)
-                {
-                    labelMessage.Text = "응답 데이터가 없습니다.";
-                }
-                else if (result.IsSuccess)
-                {
-                    dataGridViewAddress.DataSource = result.AddressList;
+                if (result == null) throw new Exception("응답 데이터가 없습니다.");
 
-                    if (result.Header != null)
-                    {
-                        InitComboBoxPage(result.Header.TotalPage, result.Header.CurrentPage);
+                if (!result.IsSuccess) throw new Exception(result.Header?.ErrMsg);
 
-                        labelMessage.Text = $"데이터 수: {result.Header.TotalCount:N0}";
-                    }
-                }
-                else
+                dataGridViewAddress.DataSource = result.AddressList;
+
+                if (result.Header != null)
                 {
-                    labelMessage.Text = result?.Header?.ErrMsg;
+                    InitComboBoxPage(result.Header.TotalPage, result.Header.CurrentPage);
+
+                    labelMessage.Text = $"데이터 수: {result.Header.TotalCount:N0}";
                 }
             }
         }
